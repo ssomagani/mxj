@@ -57,8 +57,8 @@ func (mv Map) UpdateValuesForPath(newVal interface{}, path string, subkeys ...st
 		if len(newVal.(map[string]interface{})) != 1 {
 			return 0, fmt.Errorf("newVal map can only have len == 1 - %+v", newVal)
 		}
-		for key, val = range newVal.(map[string]interface{}) {
-		}
+//		for key, val = range newVal.(map[string]interface{}) {
+//		}
 	case string: // split it as a key:value pair
 		ss := strings.Split(newVal.(string), fieldSep)
 		n := len(ss)
@@ -101,7 +101,7 @@ func (mv Map) UpdateValuesForPath(newVal interface{}, path string, subkeys ...st
 
 // navigate the path
 func updateValuesForKeyPath(key string, value interface{}, m interface{}, keys []string, subkeys map[string]interface{}, cnt *int) {
-	// ----- at end node: looking at possible node to get 'key' ----
+    // ----- at end node: looking at possible node to get 'key' ----
 	if len(keys) == 1 {
 		updateValue(key, value, m, keys[0], subkeys, cnt)
 		return
@@ -136,20 +136,27 @@ func updateValuesForKeyPath(key string, value interface{}, m interface{}, keys [
 				updateValuesForKeyPath(key, value, v, keys[1:], subkeys, cnt)
             } else {
                 m.(map[string]interface{})[keys[0]] = make(map[string]interface{}, 0)
-                updateValuesForKeyPath(key, value, v, keys[1:], subkeys, cnt)
+                updateValuesForKeyPath(key, value, m, keys, subkeys, cnt)
             }
 		case []interface{}: // may be buried in list
+            found := false
 			for _, v := range m.([]interface{}) {
 				switch v.(type) {
 				case map[string]interface{}:
 					if vv, ok := v.(map[string]interface{})[keys[0]]; ok {
 						updateValuesForKeyPath(key, value, vv, keys[1:], subkeys, cnt)
-					} else {
-                        m.(map[string]interface{})[keys[0]] = make(map[string]interface{}, 0)
-                        updateValuesForKeyPath(key, value, v, keys[1:], subkeys, cnt)
-                    }
+                        found = true
+					}
 				}
 			}
+            if !found {
+                blankVal := make(map[string]interface{}, 0)
+                blankVal[keys[0]] = make(map[string]interface{}, 0)
+                m = append(m.([]interface{}), blankVal)
+                updateValuesForKeyPath(key, value, blankVal, keys[1:], subkeys, cnt)
+            }
+            default:
+            fmt.Println("Default NOT HANDLED !!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 		}
 	}
 }
@@ -167,6 +174,9 @@ func updateValue(key string, value interface{}, m interface{}, keys0 string, sub
 			return
 		}
 		endVal, _ := m.(map[string]interface{})[keys0]
+        if endVal == nil {
+            endVal = make(map[string]interface{}, 0)
+        }
         
 		// if newV key is the end of path, replace the value for path-end
 		// may be []interface{} - means replace just an entry w/ subkeys
