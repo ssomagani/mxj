@@ -24,7 +24,7 @@ var authorDoc = []byte(`
 			</book>
 		</books>
 	</author>
-	<author>
+    <author>
 		<name>John Hawkes</name>
 		<books>
 			<book>
@@ -63,7 +63,7 @@ func TestUpdateCreate(t *testing.T) {
 
 	m.UpdateValuesForPath("comment:Whatever", "biblio.author.books.book", "title:JR")
     m.UpdateValuesForPath("-country:usa", "biblio.geography")
-    m.UpdateValuesForPath("-country:usa", "biblio.author.residence")
+    m.UpdateValuesForPath("-temporary:usa", "biblio.author.residence.country")
     
     // Don't use wild cards. It'll go to shit
     //m.UpdateValuesForPath("comment:not bad", "*.*.*.*", "title:The Blood Oranges")
