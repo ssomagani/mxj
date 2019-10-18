@@ -135,10 +135,7 @@ func updateValuesForKeyPath(key string, value interface{}, m interface{}, keys [
 			if v, ok := m.(map[string]interface{})[keys[0]]; ok {
 				updateValuesForKeyPath(key, value, v, keys[1:], subkeys, cnt)
             } else {
-                if m == nil {
-                    m = make(map[string]interface{}, 0)
-                }
-                m.(map[string]interface{})[keys[0]] = make(map[string]interface{}, 0)
+                m.(map[string]interface{})[keys[0]] = make(map[string]interface{})
                 updateValuesForKeyPath(key, value, m, keys, subkeys, cnt)
             }
 		case []interface{}: // may be buried in list
@@ -153,8 +150,8 @@ func updateValuesForKeyPath(key string, value interface{}, m interface{}, keys [
 				}
 			}
             if !found {
-                blankVal := make(map[string]interface{}, 0)
-                blankVal[keys[0]] = make(map[string]interface{}, 0)
+                blankVal := make(map[string]interface{})
+                blankVal[keys[0]] = make(map[string]interface{})
                 m = append(m.([]interface{}), blankVal)
                 updateValuesForKeyPath(key, value, blankVal, keys[1:], subkeys, cnt)
             }
@@ -178,7 +175,7 @@ func updateValue(key string, value interface{}, m interface{}, keys0 string, sub
 		}
 		endVal, _ := m.(map[string]interface{})[keys0]
         if endVal == nil {
-            endVal = make(map[string]interface{}, 0)
+            endVal = make(map[string]interface{})
         }
         
 		// if newV key is the end of path, replace the value for path-end
@@ -258,7 +255,7 @@ func updateValue(key string, value interface{}, m interface{}, keys0 string, sub
 				(*cnt)++
 			}
             case string:
-                endVal = make(map[string]interface{}, 0)
+                endVal = make(map[string]interface{})
                 endVal.(map[string]interface{})[key] = value
                 (m.(map[string]interface{}))[keys0] = endVal
 		}
@@ -271,7 +268,7 @@ func updateValue(key string, value interface{}, m interface{}, keys0 string, sub
                 continue
 			 }
 			 if _, ok := mm[keys0]; !ok {
-                mm[keys0] = make(map[string]interface{}, 0)
+                mm[keys0] = make(map[string]interface{})
 			 }
 			 if !hasSubKeys(mm, subkeys) {
 				continue
