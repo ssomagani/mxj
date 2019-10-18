@@ -57,8 +57,8 @@ func (mv Map) UpdateValuesForPath(newVal interface{}, path string, subkeys ...st
 		if len(newVal.(map[string]interface{})) != 1 {
 			return 0, fmt.Errorf("newVal map can only have len == 1 - %+v", newVal)
 		}
-//		for key, val = range newVal.(map[string]interface{}) {
-//		}
+		for key, val = range newVal.(map[string]interface{}) {
+		}
 	case string: // split it as a key:value pair
 		ss := strings.Split(newVal.(string), fieldSep)
 		n := len(ss)
@@ -135,6 +135,9 @@ func updateValuesForKeyPath(key string, value interface{}, m interface{}, keys [
 			if v, ok := m.(map[string]interface{})[keys[0]]; ok {
 				updateValuesForKeyPath(key, value, v, keys[1:], subkeys, cnt)
             } else {
+                if m == nil {
+                    m = make(map[string]interface{}, 0)
+                }
                 m.(map[string]interface{})[keys[0]] = make(map[string]interface{}, 0)
                 updateValuesForKeyPath(key, value, m, keys, subkeys, cnt)
             }
