@@ -57,6 +57,7 @@ var XmlCharsetReader func(charset string, input io.Reader) (io.Reader, error)
 //	      extraneous xml.CharData will be ignored unless io.EOF is reached first.
 //	   3. If CoerceKeysToLower() has been called, then all key values will be lower case.
 //	   4. If CoerceKeysToSnakeCase() has been called, then all key values will be converted to snake case.
+//	   5. If DisableTrimWhiteSpace(b bool) has been called, then all values will be trimmed or not. 'true' by default.
 func NewMapXml(xmlVal []byte, cast ...bool) (Map, error) {
 	var r bool
 	if len(cast) == 1 {
@@ -208,8 +209,12 @@ var includeTagSeqNum bool
 			}
 		}
 */
-func IncludeTagSeqNum(b bool) {
-	includeTagSeqNum = b
+func IncludeTagSeqNum(b ...bool) {
+	if len(b) == 0 {
+		includeTagSeqNum = !includeTagSeqNum
+	} else if len(b) == 1 {
+		includeTagSeqNum = b[0]
+	}
 }
 
 // all keys will be "lower case"
@@ -228,6 +233,26 @@ func CoerceKeysToLower(b ...bool) {
 		lowerCase = !lowerCase
 	} else if len(b) == 1 {
 		lowerCase = b[0]
+	}
+}
+
+// disableTrimWhiteSpace sets if the white space should be removed or not
+var disableTrimWhiteSpace bool
+var trimRunes = "\t\r\b\n "
+
+// DisableTrimWhiteSpace set if the white space should be trimmed or not. By default white space is always trimmed. If
+// no argument is provided, trim white space will be disabled.
+func DisableTrimWhiteSpace(b ...bool) {
+	if len(b) == 0 {
+		disableTrimWhiteSpace = true
+	} else {
+		disableTrimWhiteSpace = b[0]
+	}
+
+	if disableTrimWhiteSpace {
+		trimRunes = "\t\r\b\n"
+	} else {
+		trimRunes = "\t\r\b\n "
 	}
 }
 
@@ -347,6 +372,9 @@ func xmlToMapParser(skey string, a []xml.Attr, p *xml.Decoder, r bool) (map[stri
 				if lowerCase {
 					key = strings.ToLower(key)
 				}
+				if xmlEscapeCharsDecoder { // per issue#84
+					v.Value = escapeChars(v.Value)
+				}
 				na[key] = cast(v.Value, r, key)
 			}
 		}
@@ -448,11 +476,20 @@ func xmlToMapParser(skey string, a []xml.Attr, p *xml.Decoder, r bool) (map[stri
 				} else {
 					n[skey] = "" // empty element
 				}
+			} else if len(n) == 1 && len(na) > 0 {
+				// it's a simple element w/ no attributes w/ subelements
+				for _, v := range n {
+					na["#text"] = v
+				}
+				n[skey] = na
 			}
 			return n, nil
 		case xml.CharData:
 			// clean up possible noise
-			tt := strings.Trim(string(t.(xml.CharData)), "\t\r\b\n ")
+			tt := strings.Trim(string(t.(xml.CharData)), trimRunes)
+			if xmlEscapeCharsDecoder { // issue#84
+				tt = escapeChars(tt)
+			}
 			if len(tt) > 0 {
 				if len(na) > 0 || decodeSimpleValuesAsMap {
 					na["#text"] = cast(tt, r, "#text")
@@ -477,8 +514,12 @@ var castNanInf bool
 
 // Cast "Nan", "Inf", "-Inf" XML values to 'float64'.
 // By default, these values will be decoded as 'string'.
-func CastNanInf(b bool) {
-	castNanInf = b
+func CastNanInf(b ...bool) {
+	if len(b) == 0 {
+		castNanInf = !castNanInf
+	} else if len(b) == 1 {
+		castNanInf = b[0]
+	}
 }
 
 // cast - try to cast string values to bool or float64
@@ -538,8 +579,12 @@ var castToFloat = true
 // CastValuesToFloat can be used to skip casting to float64 when
 // "cast" argument is 'true' in NewMapXml, etc.
 // Default is true.
-func CastValuesToFloat(b bool) {
-	castToFloat = b
+func CastValuesToFloat(b ...bool) {
+	if len(b) == 0 {
+		castToFloat = !castToFloat
+	} else if len(b) == 1 {
+		castToFloat = b[0]
+	}
 }
 
 var castToBool = true
@@ -547,8 +592,12 @@ var castToBool = true
 // CastValuesToBool can be used to skip casting to bool when
 // "cast" argument is 'true' in NewMapXml, etc.
 // Default is true.
-func CastValuesToBool(b bool) {
-	castToBool = b
+func CastValuesToBool(b ...bool) {
+	if len(b) == 0 {
+		castToBool = !castToBool
+	} else if len(b) == 1 {
+		castToBool = b[0]
+	}
 }
 
 // checkTagToSkip - switch to address Issue #58
@@ -590,6 +639,20 @@ func XmlDefaultEmptyElemSyntax() {
 	useGoXmlEmptyElemSyntax = false
 }
 
+// ------- issue #88 ----------
+// xmlCheckIsValid set switch to force decoding the encoded XML to
+// see if it is valid XML.
+var xmlCheckIsValid bool
+
+// XmlCheckIsValid forces the encoded XML to be checked for validity.
+func XmlCheckIsValid(b ...bool) {
+	if len(b) == 1 {
+		xmlCheckIsValid = b[0]
+		return
+	}
+	xmlCheckIsValid = !xmlCheckIsValid
+}
+
 // Encode a Map as XML.  The companion of NewMapXml().
 // The following rules apply.
 //    - The key label "#text" is treated as the value for a simple element with attributes.
@@ -609,7 +672,7 @@ func XmlDefaultEmptyElemSyntax() {
 func (mv Map) Xml(rootTag ...string) ([]byte, error) {
 	m := map[string]interface{}(mv)
 	var err error
-	s := new(string)
+	b := new(bytes.Buffer)
 	p := new(pretty) // just a stub
 
 	if len(m) == 1 && len(rootTag) == 0 {
@@ -623,20 +686,32 @@ func (mv Map) Xml(rootTag ...string) ([]byte, error) {
 					switch v.(type) {
 					case map[string]interface{}: // noop
 					default: // anything else
-						err = mapToXmlIndent(false, s, DefaultRootTag, m, p)
+						err = marshalMapToXmlIndent(false, b, DefaultRootTag, m, p)
 						goto done
 					}
 				}
 			}
-			err = mapToXmlIndent(false, s, key, value, p)
+			err = marshalMapToXmlIndent(false, b, key, value, p)
 		}
 	} else if len(rootTag) == 1 {
-		err = mapToXmlIndent(false, s, rootTag[0], m, p)
+		err = marshalMapToXmlIndent(false, b, rootTag[0], m, p)
 	} else {
-		err = mapToXmlIndent(false, s, DefaultRootTag, m, p)
+		err = marshalMapToXmlIndent(false, b, DefaultRootTag, m, p)
 	}
 done:
-	return []byte(*s), err
+	if xmlCheckIsValid {
+		d := xml.NewDecoder(bytes.NewReader(b.Bytes()))
+		for {
+			_, err = d.Token()
+			if err == io.EOF {
+				err = nil
+				break
+			} else if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return b.Bytes(), err
 }
 
 // The following implementation is provided only for symmetry with NewMapXmlReader[Raw]
@@ -854,7 +929,7 @@ func (mv Map) XmlIndent(prefix, indent string, rootTag ...string) ([]byte, error
 	m := map[string]interface{}(mv)
 
 	var err error
-	s := new(string)
+	b := new(bytes.Buffer)
 	p := new(pretty)
 	p.indent = indent
 	p.padding = prefix
@@ -864,17 +939,29 @@ func (mv Map) XmlIndent(prefix, indent string, rootTag ...string) ([]byte, error
 		// use it if it isn't a key for a list
 		for key, value := range m {
 			if _, ok := value.([]interface{}); ok {
-				err = mapToXmlIndent(true, s, DefaultRootTag, m, p)
+				err = marshalMapToXmlIndent(true, b, DefaultRootTag, m, p)
 			} else {
-				err = mapToXmlIndent(true, s, key, value, p)
+				err = marshalMapToXmlIndent(true, b, key, value, p)
 			}
 		}
 	} else if len(rootTag) == 1 {
-		err = mapToXmlIndent(true, s, rootTag[0], m, p)
+		err = marshalMapToXmlIndent(true, b, rootTag[0], m, p)
 	} else {
-		err = mapToXmlIndent(true, s, DefaultRootTag, m, p)
+		err = marshalMapToXmlIndent(true, b, DefaultRootTag, m, p)
 	}
-	return []byte(*s), err
+	if xmlCheckIsValid {
+		d := xml.NewDecoder(bytes.NewReader(b.Bytes()))
+		for {
+			_, err = d.Token()
+			if err == io.EOF {
+				err = nil
+				break
+			} else if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return b.Bytes(), err
 }
 
 type pretty struct {
@@ -899,7 +986,9 @@ func (p *pretty) Outdent() {
 
 // where the work actually happens
 // returns an error if an attribute is not atomic
-func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp *pretty) error {
+// NOTE: 01may20 - replaces mapToXmlIndent(); uses bytes.Buffer instead for string appends.
+func marshalMapToXmlIndent(doIndent bool, b *bytes.Buffer, key string, value interface{}, pp *pretty) error {
+	var err error
 	var endTag bool
 	var isSimple bool
 	var elen int
@@ -921,14 +1010,44 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 		}
 	}
 
+	// 14jul20.  The following block of code has become something of a catch all for odd stuff
+	// that might be passed in as a result of casting an arbitrary map[<T>]<T> to an mxj.Map
+	// value and then call m.Xml or m.XmlIndent. See issue #71 (and #73) for such edge cases.
 	switch value.(type) {
-	// special handling of []interface{} values when len(value) == 0
+	// these types are handled during encoding
 	case map[string]interface{}, []byte, string, float64, bool, int, int32, int64, float32, json.Number:
-		if doIndent {
-			*s += p.padding
+	case []map[string]interface{}, []string, []float64, []bool, []int, []int32, []int64, []float32, []json.Number:
+	case []interface{}:
+	case nil:
+		value = ""
+	default:
+		// see if value is a struct, if so marshal using encoding/xml package
+		if reflect.ValueOf(value).Kind() == reflect.Struct {
+			if v, err := xml.Marshal(value); err != nil {
+				return err
+			} else {
+				value = string(v)
+			}
+		} else {
+			// coerce eveything else into a string value
+			value = fmt.Sprint(value)
 		}
-		*s += `<` + key
 	}
+
+	// start the XML tag with required indentaton and padding
+	if doIndent {
+		if _, err = b.WriteString(p.padding); err != nil {
+			return err
+		}
+	}
+	switch value.(type) {
+	case []interface{}:
+	default:
+		if _, err = b.WriteString(`<` + key); err != nil {
+			return err
+		}
+	}
+
 	switch value.(type) {
 	case map[string]interface{}:
 		vv := value.(map[string]interface{})
@@ -969,21 +1088,29 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			attrlist = attrlist[:n]
 			sort.Sort(attrList(attrlist))
 			for _, v := range attrlist {
-				*s += ` ` + v[0] + `="` + v[1] + `"`
+				if _, err = b.WriteString(` ` + v[0] + `="` + v[1] + `"`); err != nil {
+					return err
+				}
 			}
 		}
 		// only attributes?
 		if n == lenvv {
 			if useGoXmlEmptyElemSyntax {
-				*s += `</` + key + ">"
+				if _, err = b.WriteString(`</` + key + ">"); err != nil {
+					return err
+				}
 			} else {
-				*s += `/>`
+				if _, err = b.WriteString(`/>`); err != nil {
+					return err
+				}
 			}
 			break
 		}
 
 		// simple element? Note: '#text" is an invalid XML tag.
+		isComplex := false
 		if v, ok := vv["#text"]; ok && n+1 == lenvv {
+			// just the value and attributes
 			switch v.(type) {
 			case string:
 				if xmlEscapeChars {
@@ -994,25 +1121,51 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			case []byte:
 				if xmlEscapeChars {
 					v = escapeChars(string(v.([]byte)))
+				} else {
+					v = string(v.([]byte))
 				}
 			}
-			*s += ">" + fmt.Sprintf("%v", v)
+			if _, err = b.WriteString(">" + fmt.Sprintf("%v", v)); err != nil {
+				return err
+			}
 			endTag = true
 			elen = 1
 			isSimple = true
 			break
 		} else if ok {
-			// Handle edge case where simple element with attributes
-			// is unmarshal'd using NewMapXml() where attribute prefix
-			// has been set to "".
-			// TODO(clb): should probably scan all keys for invalid chars.
-			return fmt.Errorf("invalid attribute key label: #text - due to attributes not being prefixed")
+			// need to handle when there are subelements in addition to the simple element value
+			// issue #90
+			switch v.(type) {
+			case string:
+				if xmlEscapeChars {
+					v = escapeChars(v.(string))
+				} else {
+					v = v.(string)
+				}
+			case []byte:
+				if xmlEscapeChars {
+					v = escapeChars(string(v.([]byte)))
+				} else {
+					v = string(v.([]byte))
+				}
+			}
+			if _, err = b.WriteString(">" + fmt.Sprintf("%v", v)); err != nil {
+				return err
+			}
+			isComplex = true
 		}
 
 		// close tag with possible attributes
-		*s += ">"
+		if !isComplex {
+			if _, err = b.WriteString(">"); err != nil {
+				return err
+			}
+		}
 		if doIndent {
-			*s += "\n"
+			// *s += "\n"
+			if _, err = b.WriteString("\n"); err != nil {
+				return err
+			}
 		}
 		// something more complex
 		p.mapDepth++
@@ -1020,6 +1173,10 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 		elemlist := make([][2]interface{}, len(vv))
 		n = 0
 		for k, v := range vv {
+			if k == "#text" {
+				// simple element handled above
+				continue
+			}
 			if lenAttrPrefix > 0 && lenAttrPrefix < len(k) && k[:lenAttrPrefix] == attrPrefix {
 				continue
 			}
@@ -1039,7 +1196,7 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 				}
 			}
 			i++
-			if err := mapToXmlIndent(doIndent, s, v[0].(string), v[1], p); err != nil {
+			if err := marshalMapToXmlIndent(doIndent, b, v[0].(string), v[1], p); err != nil {
 				return err
 			}
 			switch v[1].(type) {
@@ -1058,9 +1215,13 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 		// special case - found during implementing Issue #23
 		if len(value.([]interface{})) == 0 {
 			if doIndent {
-				*s += p.padding + p.indent
+				if _, err = b.WriteString(p.padding + p.indent); err != nil {
+					return err
+				}
 			}
-			*s += "<" + key
+			if _, err = b.WriteString("<" + key); err != nil {
+				return err
+			}
 			elen = 0
 			endTag = true
 			break
@@ -1069,7 +1230,7 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			if doIndent {
 				p.Indent()
 			}
-			if err := mapToXmlIndent(doIndent, s, key, v, p); err != nil {
+			if err := marshalMapToXmlIndent(doIndent, b, key, v, p); err != nil {
 				return err
 			}
 			if doIndent {
@@ -1086,9 +1247,13 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 		//[]string should be treated exaclty as []interface{}
 		if len(value.([]string)) == 0 {
 			if doIndent {
-				*s += p.padding + p.indent
+				if _, err = b.WriteString(p.padding + p.indent); err != nil {
+					return err
+				}
 			}
-			*s += "<" + key
+			if _, err = b.WriteString("<" + key); err != nil {
+				return err
+			}
 			elen = 0
 			endTag = true
 			break
@@ -1097,7 +1262,7 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			if doIndent {
 				p.Indent()
 			}
-			if err := mapToXmlIndent(doIndent, s, key, v, p); err != nil {
+			if err := marshalMapToXmlIndent(doIndent, b, key, v, p); err != nil {
 				return err
 			}
 			if doIndent {
@@ -1108,9 +1273,14 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 	case nil:
 		// terminate the tag
 		if doIndent {
-			*s += p.padding
+			// *s += p.padding
+			if _, err = b.WriteString(p.padding); err != nil {
+				return err
+			}
 		}
-		*s += "<" + key
+		if _, err = b.WriteString("<" + key); err != nil {
+			return err
+		}
 		endTag, isSimple = true, true
 		break
 	default: // handle anything - even goofy stuff
@@ -1123,12 +1293,17 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			}
 			elen = len(v)
 			if elen > 0 {
-				*s += ">" + v
+				// *s += ">" + v
+				if _, err = b.WriteString(">" + v); err != nil {
+					return err
+				}
 			}
 		case float64, bool, int, int32, int64, float32, json.Number:
 			v := fmt.Sprintf("%v", value)
 			elen = len(v) // always > 0
-			*s += ">" + v
+			if _, err = b.WriteString(">" + v); err != nil {
+				return err
+			}
 		case []byte: // NOTE: byte is just an alias for uint8
 			// similar to how xml.Marshal handles []byte structure members
 			v := string(value.([]byte))
@@ -1137,9 +1312,15 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 			}
 			elen = len(v)
 			if elen > 0 {
-				*s += ">" + v
+				// *s += ">" + v
+				if _, err = b.WriteString(">" + v); err != nil {
+					return err
+				}
 			}
 		default:
+			if _, err = b.WriteString(">"); err != nil {
+				return err
+			}
 			var v []byte
 			var err error
 			if doIndent {
@@ -1148,11 +1329,15 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 				v, err = xml.Marshal(value)
 			}
 			if err != nil {
-				*s += ">UNKNOWN"
+				if _, err = b.WriteString(">UNKNOWN"); err != nil {
+					return err
+				}
 			} else {
 				elen = len(v)
 				if elen > 0 {
-					*s += string(v)
+					if _, err = b.Write(v); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -1162,21 +1347,31 @@ func mapToXmlIndent(doIndent bool, s *string, key string, value interface{}, pp 
 	if endTag {
 		if doIndent {
 			if !isSimple {
-				*s += p.padding
+				if _, err = b.WriteString(p.padding); err != nil {
+					return err
+				}
 			}
 		}
 		if elen > 0 || useGoXmlEmptyElemSyntax {
 			if elen == 0 {
-				*s += ">"
+				if _, err = b.WriteString(">"); err != nil {
+					return err
+				}
 			}
-			*s += `</` + key + ">"
+			if _, err = b.WriteString(`</` + key + ">"); err != nil {
+				return err
+			}
 		} else {
-			*s += `/>`
+			if _, err = b.WriteString(`/>`); err != nil {
+				return err
+			}
 		}
 	}
 	if doIndent {
 		if p.cnt > p.start {
-			*s += "\n"
+			if _, err = b.WriteString("\n"); err != nil {
+				return err
+			}
 		}
 		p.Outdent()
 	}
